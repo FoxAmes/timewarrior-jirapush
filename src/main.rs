@@ -71,16 +71,13 @@ fn main() {
                 // See if tag contains a (valid-ish) Jira URL
                 let url_re = Regex::new(r"(?P<url>https?://.+browse/(?P<ticket>.+))").unwrap();
                 let captures = url_re.captures(bw_tag);
-                match captures {
-                    Some(c) => {
-                        println!(
-                            "Need to upload log for {} at {}",
-                            c["ticket"].to_string(),
-                            c["url"].to_string()
-                        )
-                        // Haha upload it or something idk :)
-                    }
-                    None => {}
+                if let Some(c) = captures {
+                    println!(
+                        "Need to upload log for {} at {}",
+                        c["ticket"].to_string(),
+                        c["url"].to_string()
+                    )
+                    // Haha upload it or something idk :)
                 }
             }
         }
