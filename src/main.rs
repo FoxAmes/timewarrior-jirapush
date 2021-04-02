@@ -5,8 +5,8 @@ use jira::JiraWorklog;
 use log::{debug, error, info, warn};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::io::stdin;
 use std::{collections::HashMap, str::FromStr};
+use std::{io::stdin, time::Duration};
 use time::OffsetDateTime;
 
 /// A structure representing a single TimeWarrior log entry.
@@ -116,7 +116,10 @@ async fn main() {
     // If we have pending logs, construct a REST client and POST them
     if pending_logs.len() > 0 {
         // Build connection info
-        let rest_c = reqwest::Client::new();
+        let rest_c = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
         let jc = jira::JiraConnection {
             user: tw_conf["twjp.user"].clone(),
             token: tw_conf["twjp.token"].clone(),
