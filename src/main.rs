@@ -5,7 +5,7 @@ use jira::JiraWorklog;
 use log::{debug, error, info, warn, LevelFilter};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, io::Read, str::FromStr};
 use std::{io::stdin, time::Duration};
 use time::OffsetDateTime;
 
@@ -21,6 +21,7 @@ use time::OffsetDateTime;
 /// ```
 #[derive(Serialize, Deserialize, Debug)]
 struct TimeWarriorLog {
+    pub id: usize,
     pub start: String,
     pub end: Option<String>,
     pub tags: Vec<String>,
@@ -53,6 +54,21 @@ fn parse_tw_config(block: &str) -> HashMap<String, String> {
         }
     }
     tw_conf
+}
+
+/// Tag a timewarrior interval
+fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
+    // Call the interval as uploaded
+    match std::process::Command::new("timew")
+        .args(&["tag", &format!("@{}", tw_log.id), tag])
+        .output()
+    {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!(
+            "Error marking interval {} as uploaded: {}",
+            tw_log.id, e
+        )),
+    }
 }
 
 #[tokio::main]
@@ -117,10 +133,14 @@ async fn main() {
     };
 
     // Iterate over logs
+    let upload_tag = tw_conf
+        .get("twjp.uploaded_tag")
+        .unwrap_or(&"jira-uploaded".to_string())
+        .clone();
     let mut pending_logs = Vec::<(String, &TimeWarriorLog)>::new();
     for tw_log in &tw_logs {
         // Check if log is uploaded, and if not, if it's complete and so needs to be
-        let is_uploaded = tw_log.tags.contains(&"jira-logged".to_string());
+        let is_uploaded = tw_log.tags.contains(&upload_tag);
         let is_complete = tw_log.end.is_some();
         if !is_uploaded && is_complete {
             // Find a bugwarrior tag
@@ -137,6 +157,7 @@ async fn main() {
     }
 
     // If we have pending logs, construct a REST client and POST them
+    // Additionally, mark uploaded logs as such
     if pending_logs.len() > 0 {
         // Build connection info
         let rest_c = reqwest::Client::builder()
@@ -198,21 +219,41 @@ async fn main() {
                 }
                 // We have a log here already, skip this one.
                 if exists {
-                    info!("Skipping existing log for {}", issue);
+                    // Tag the interval as uploaded
+                    match tag_tw_log(&log, &upload_tag) {
+                        Ok(_) => {
+                            info!(
+                                "Log @{} already exists for {}, marking as uploaded.",
+                                log.id, issue
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Error marking existing interval {} as uploaded: {}",
+                                log.id, e
+                            );
+                        }
+                    }
                     continue;
                 }
             }
             // Upload
             match block_on(jira::upload_worklog(&rest_c, &jc, &issue, &worklog)) {
                 Ok(_) => {
-                    info!("Logged {:?} for {}", worklog, issue);
+                    // Tag the interval as uploaded
+                    match tag_tw_log(&log, &upload_tag) {
+                        Ok(_) => {
+                            info!("Logged @{} for {}", log.id, issue);
+                        }
+                        Err(e) => {
+                            warn!("Error marking interval {} as uploaded: {}", log.id, e);
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("Error logging {:?} for {}: {}", worklog, issue, e);
                 }
             }
-
-            // Need to tag the log as uploaded, however we can't do that via a `timew` call as it will recursively call this extension.
         }
     }
 }
