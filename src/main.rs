@@ -2,7 +2,7 @@ pub mod jira;
 
 use futures::executor::block_on;
 use jira::JiraWorklog;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, warn, LevelFilter};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, str::FromStr};
@@ -26,42 +26,50 @@ struct TimeWarriorLog {
     pub tags: Vec<String>,
 }
 
-#[tokio::main]
-async fn main() {
-    // Parse config initially passed from TimeWarrior
+/// Parses key-value configuration passed by TimeWarrior.
+/// See https://timewarrior.net/docs/api/#input-format for more information.
+fn parse_tw_config(block: &str) -> HashMap<String, String> {
+    // Create a new map
     let mut tw_conf = HashMap::<String, String>::new();
-    let mut stdin_block = String::new();
     // Read and store config pairs
-    while let Ok(chars) = stdin().read_line(&mut stdin_block) {
-        match chars {
+    for stdin_line in block.split('\n').filter(|d| d.contains(":")) {
+        // Attempt to split the key-value pair
+        let directives: Vec<&str> = stdin_line.split(':').map(|d| d.trim()).collect();
+        match directives.len() {
             0..=1 => {
-                // If we've reached an empty line, there is no more config to parse
-                break;
+                // Skip invalid lines
+                warn!(
+                    "Unable to parse TimeWarrior config: {}, skipping",
+                    stdin_line
+                );
             }
             _ => {
-                for stdin_line in stdin_block.split('\n').filter(|d| d.contains(":")) {
-                    // Attempt to split the key-value pair
-                    let directives: Vec<&str> = stdin_line.split(':').map(|d| d.trim()).collect();
-                    match directives.len() {
-                        0..=1 => {
-                            // Skip invalid lines
-                            warn!(
-                                "Unable to parse TimeWarrior config: {}, skipping",
-                                stdin_line
-                            );
-                        }
-                        _ => {
-                            // Store valid lines
-                            tw_conf.insert(
-                                directives[0].to_string(),
-                                directives[1..].join(":").to_string(),
-                            );
-                        }
-                    }
-                }
+                // Store valid lines
+                tw_conf.insert(
+                    directives[0].to_string(),
+                    directives[1..].join(":").to_string(),
+                );
             }
         }
     }
+    tw_conf
+}
+
+#[tokio::main]
+async fn main() {
+    // Parse config initially passed from TimeWarrior
+    // Read and store config pairs from stdin
+    let mut stdin_block = String::new();
+    while let Ok(chars) = stdin().read_line(&mut stdin_block) {
+        match chars {
+            0..=1 => {
+                // If we've reached an empty line, there is no more config to read
+                break;
+            }
+            _ => {}
+        }
+    }
+    let tw_conf = parse_tw_config(&stdin_block);
 
     // Check required config (JIRA base URL, username, token)
     if !(tw_conf.contains_key("twjp.url")
@@ -72,12 +80,27 @@ async fn main() {
         return;
     }
 
+    // Handle "well-behaved" config guidelines
+    // https://timewarrior.net/docs/api/#guidelines
+    let mut log_level = LevelFilter::Error;
+    if let Some(val) = tw_conf.get("verbose") {
+        match val.as_str() {
+            "on" | "1" | "yes" | "y" | "true" => log_level = LevelFilter::Warn,
+            _ => {}
+        }
+    }
+    if let Some(val) = tw_conf.get("debug") {
+        match val.as_str() {
+            "on" | "1" | "yes" | "y" | "true" => log_level = LevelFilter::Debug,
+            _ => {}
+        }
+    }
+
     // Set log level, if specified
-    let mut log_level = log::LevelFilter::Warn;
-    if tw_conf.contains_key("twjp.log_level") {
-        match log::LevelFilter::from_str(&tw_conf["twjp.log_level"]) {
+    if let Some(val) = tw_conf.get("twjp.log_level") {
+        match LevelFilter::from_str(val) {
             Ok(l) => log_level = l,
-            Err(_) => warn!("Invalid log level {}", tw_conf["twjp.log_level"]),
+            Err(_) => warn!("Invalid log level {}", val),
         }
     };
 
