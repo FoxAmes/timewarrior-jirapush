@@ -10,6 +10,12 @@ TWJP will tag timewarrior intervals when uploaded to reduce the number of API ca
 
 TWJP is in early development, and mostly exists because I can't stand using Jira's web interface to upload time logs, so beyond basic functionality I may not have time to flesh out, fix, or otherwise support the tool. Use at your own risk!
 
+## Installation and Usage
+
+Build with `cargo build --release`, and place the compiled binary in your TimeWarrior extensions directory (likely `~/.timewarrior/extensions`).
+
+Assuming the default binary name of `jirapush`, you can invoke the extension via `timew jirapush`, or any left-matched equivalend, such as `timew jira`.
+
 ## Configuration
 
 ### Example configuration
