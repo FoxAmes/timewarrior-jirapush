@@ -3,7 +3,7 @@ pub mod jira;
 use futures::executor::block_on;
 use jira::JiraWorklog;
 use log::{debug, error, info, warn, LevelFilter};
-use regex::Regex;
+use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, str::FromStr};
 use std::{io::stdin, time::Duration};
@@ -143,15 +143,11 @@ async fn main() {
         let is_uploaded = tw_log.tags.contains(&upload_tag);
         let is_complete = tw_log.end.is_some();
         if !is_uploaded && is_complete {
-            // Find a bugwarrior tag
-            let bw_tag = tw_log.tags.iter().find(|t| t.starts_with("(bw)"));
-            if let Some(bw_tag) = bw_tag {
-                // See if tag contains a (valid-ish) Jira URL
-                let url_re = Regex::new(r"(?P<url>https?://.+browse/(?P<issue>.+))").unwrap();
-                let captures = url_re.captures(bw_tag);
-                if let Some(c) = captures {
-                    pending_logs.push((c["issue"].to_string(), tw_log));
-                }
+            // Find the first tag containing a Jira-esque URL
+            let url_re = Regex::new(r"(?P<url>https?://.+browse/(?P<issue>.+))").unwrap();
+            let url_tags = tw_log.tags.iter().filter_map(|t| url_re.captures(t));
+            if let Some(url_captures) = url_tags.collect::<Vec<Captures>>().first() {
+                pending_logs.push((url_captures["issue"].to_string(), tw_log));
             }
         }
     }
