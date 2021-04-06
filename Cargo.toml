@@ -3,6 +3,12 @@ name = "timewarrior_jirapush"
 version = "0.1.0"
 authors = ["Forest Ames <fox.ames@t7c.dev>"]
 edition = "2018"
+description = TimeWarrior-JiraPush is a configurable TimeWarrior Extension that uploads timewarrior intervals to Jira as work logs.
+readme = README
+homepage = https://gitlab.com/FoxAmes/timewarrior-jirapush
+repository = https://gitlab.com/FoxAmes/timewarrior-jirapush
+license = MIT
+license-file = LICENSE
 
 [[bin]]
 name = "jirapush"
