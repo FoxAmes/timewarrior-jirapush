@@ -8,7 +8,6 @@ readme = "README"
 homepage = "https://gitlab.com/FoxAmes/timewarrior-jirapush"
 repository = "https://gitlab.com/FoxAmes/timewarrior-jirapush"
 license = "MIT"
-license-file = "LICENSE"
 
 [[bin]]
 name = "jirapush"
