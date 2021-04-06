@@ -1,5 +1,5 @@
 use log::{debug, warn};
-use reqwest::{Client, Response};
+use reqwest::blocking::{Client, Response};
 use serde::{Deserialize, Serialize};
 
 /// Jira instance connection information
@@ -18,7 +18,7 @@ pub struct JiraWorklog {
 }
 
 /// Generic get function for Jira API
-async fn get(
+fn get(
     rc: &Client,
     jc: &JiraConnection,
     endpoint: &str,
@@ -33,11 +33,10 @@ async fn get(
     .header("Accept", "application/json")
     .query(query)
     .send()
-    .await
 }
 
 /// Generic post function for Jira API
-async fn post(
+fn post(
     rc: &Client,
     jc: &JiraConnection,
     endpoint: &str,
@@ -53,7 +52,6 @@ async fn post(
     .header("Content-Type", "application/json")
     .body(body)
     .send()
-    .await
 }
 
 #[derive(Serialize, Deserialize)]
@@ -62,16 +60,14 @@ struct JiraResponseWorklog {
 }
 
 /// Pulls existing worklogs from Jira for a given issue.
-pub async fn get_worklogs(rc: &Client, jc: &JiraConnection, issue: &str) -> Vec<JiraWorklog> {
+pub fn get_worklogs(rc: &Client, jc: &JiraConnection, issue: &str) -> Vec<JiraWorklog> {
     // Fetch worklogs
     match get(
         rc,
         jc,
         &format!("rest/api/3/issue/{issue}/worklog", issue = issue),
         &vec![],
-    )
-    .await
-    {
+    ) {
         // Handle failed connections
         Err(e) => {
             warn!(
@@ -93,7 +89,7 @@ pub async fn get_worklogs(rc: &Client, jc: &JiraConnection, issue: &str) -> Vec<
             }
             // On successful fetch, move on
             true => {
-                let body = &r.text().await.unwrap().clone();
+                let body = &r.text().unwrap().clone();
                 let jr: JiraResponseWorklog = match serde_json::from_str(&body) {
                     Err(e) => {
                         warn!(
@@ -113,7 +109,7 @@ pub async fn get_worklogs(rc: &Client, jc: &JiraConnection, issue: &str) -> Vec<
 }
 
 /// Uploads a worklog to Jira.
-pub async fn upload_worklog(
+pub fn upload_worklog(
     rc: &Client,
     jc: &JiraConnection,
     issue: &str,
@@ -125,9 +121,7 @@ pub async fn upload_worklog(
         jc,
         &format!("rest/api/3/issue/{issue}/worklog", issue = issue),
         serde_json::to_string(&wl).unwrap(),
-    )
-    .await
-    {
+    ) {
         // Handle failed connections
         Err(e) => Err(format!(
             "Connection error uploading worklog for {issue}: {error}",
@@ -140,7 +134,7 @@ pub async fn upload_worklog(
                 "Error submitting worklog for {issue}: {status}\n{body:?}",
                 issue = issue,
                 status = r.status(),
-                body = r.text().await.unwrap()
+                body = r.text().unwrap()
             )),
             // On successful fetch, move on
             true => Ok(()),
