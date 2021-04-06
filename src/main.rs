@@ -1,6 +1,5 @@
 pub mod jira;
 
-use futures::executor::block_on;
 use jira::JiraWorklog;
 use log::{debug, error, info, warn, LevelFilter};
 use regex::{Captures, Regex};
@@ -71,8 +70,7 @@ fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // Parse config initially passed from TimeWarrior
     // Read and store config pairs from stdin
     let mut stdin_block = String::new();
@@ -156,7 +154,7 @@ async fn main() {
     // Additionally, mark uploaded logs as such
     if pending_logs.len() > 0 {
         // Build connection info
-        let rest_c = reqwest::Client::builder()
+        let rest_c = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
@@ -197,7 +195,7 @@ async fn main() {
             .unwrap_or(true)
             {
                 // Fetch existing logs
-                let existing_logs = block_on(jira::get_worklogs(&rest_c, &jc, &issue));
+                let existing_logs = jira::get_worklogs(&rest_c, &jc, &issue);
                 debug!("Existing logs: {:?}", existing_logs);
                 // Compare logs
                 let mut exists = false;
@@ -234,7 +232,7 @@ async fn main() {
                 }
             }
             // Upload
-            match block_on(jira::upload_worklog(&rest_c, &jc, &issue, &worklog)) {
+            match jira::upload_worklog(&rest_c, &jc, &issue, &worklog) {
                 Ok(_) => {
                     // Tag the interval as uploaded
                     match tag_tw_log(&log, &upload_tag) {
