@@ -1,10 +1,12 @@
 [package]
-name = "timewarrior-jirapush"
+name = "timewarrior_jirapush"
 version = "0.1.0"
-authors = ["Mason Edgel <medgel@reliaquest.com>"]
+authors = ["Forest Ames <fox.ames@t7c.dev>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "jirapush"
+path = "src/main.rs"
 
 [dependencies]
 "env_logger" = "0.8.3"

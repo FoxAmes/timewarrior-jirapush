@@ -1055,7 +1055,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "timewarrior-jirapush"
+name = "timewarrior_jirapush"
 version = "0.1.0"
 dependencies = [
  "env_logger",
