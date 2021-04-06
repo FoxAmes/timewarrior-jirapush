@@ -5,7 +5,7 @@ use jira::JiraWorklog;
 use log::{debug, error, info, warn, LevelFilter};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io::Read, str::FromStr};
+use std::{collections::HashMap, str::FromStr};
 use std::{io::stdin, time::Duration};
 use time::OffsetDateTime;
 
