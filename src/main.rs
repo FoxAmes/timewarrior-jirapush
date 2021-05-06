@@ -6,7 +6,7 @@ use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, str::FromStr};
 use std::{io::stdin, time::Duration};
-use time::{OffsetDateTime, PrimitiveDateTime};
+use time::OffsetDateTime;
 
 /// A structure representing a single TimeWarrior log entry.
 /// # Examples
@@ -57,75 +57,8 @@ fn parse_tw_config(block: &str) -> HashMap<String, String> {
 
 /// Tag a timewarrior interval
 fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
-    let id = match tw_log.id {
-        Some(i) => i,
-        // For timewarrior versions before 1.3.0, we won't have an ID- do our best to guess one
-        None => {
-            // List all timewarrior intervals
-            match std::process::Command::new("timew")
-                .args(&["summary", ":ids"])
-                .output()
-            {
-                // Search based on our given log
-                Ok(out) => {
-                    // Iterate over each line
-                    // There's a lot here- we check start and end timestamps, and each tag, line by line
-                    // Matching lines are then searched for IDs via Regex, and matches collected
-                    let possible_ids: Vec<usize> = String::from_utf8(out.stdout)
-                        .unwrap()
-                        .lines()
-                        .filter_map(|line| {
-                            match line.contains(
-                                &PrimitiveDateTime::parse(&tw_log.start, "%Y%m%dT%H%M%SZ")
-                                    .unwrap()
-                                    .format("%T"),
-                            ) && line.contains(
-                                &PrimitiveDateTime::parse(
-                                    tw_log.end.as_ref().unwrap(),
-                                    "%Y%m%dT%H%M%SZ",
-                                )
-                                .unwrap()
-                                .format("%T"),
-                            ) && tw_log.tags.iter().all(|t| line.contains(t))
-                            {
-                                true => {
-                                    let id_regex = Regex::new(r"\s@(?P<id>\d+)").unwrap();
-                                    usize::from_str(&id_regex.captures(&line)?[0]).ok()
-                                }
-                                false => None,
-                            }
-                        })
-                        .collect();
-                    warn!(
-                        "s: {:?} vs {:?}, e: {:?}, t: {:?}",
-                        &tw_log.start,
-                        &PrimitiveDateTime::parse(&tw_log.start, "%Y%m%dT%H%M%SZ")
-                            .unwrap()
-                            .format("%T"),
-                        tw_log.end.as_ref().unwrap(),
-                        &tw_log.tags
-                    );
-                    panic!("Possible matches: {:?}", possible_ids);
-                    match possible_ids.is_empty() {
-                        true => {
-                            return Err(
-                                "No matching intervals found.  You may need to upgrade Timewarrior."
-                                    .to_string(),
-                            );
-                        }
-                        false => possible_ids[0],
-                    }
-                }
-                Err(_) => {
-                    return Err(
-                        "Unable to determine log ID. You may need to upgrade Timewarrior."
-                            .to_string(),
-                    )
-                }
-            }
-        }
-    };
     // Call the interval as uploaded
+    let id = tw_log.id.unwrap();
     match std::process::Command::new("timew")
         .args(&["tag", &format!("@{}", id), tag])
         .output()
@@ -187,13 +120,29 @@ fn main() {
     env_logger::builder().filter_level(log_level).init();
 
     // Read remaining JSON body of logs
-    let tw_logs: Vec<TimeWarriorLog> = match serde_json::from_reader(stdin()) {
+    let mut tw_logs: Vec<TimeWarriorLog> = match serde_json::from_reader(stdin()) {
         Ok(l) => l,
         Err(e) => {
             error!("Error parsing timewarrior log as JSON: {}", e);
             return;
         }
     };
+
+    // For versions of timewarrior before 1.3.0, we need to assign IDs as best we can
+    if semver::Version::parse(tw_conf.get("temp.version").unwrap_or(&"0.0.0".to_string()))
+        .expect("Error getting Timewarrior version")
+        < semver::Version::parse("1.3.0").unwrap()
+    {
+        warn!("You are using an outdated version of Timewarrior. Work logs may not be accurately identified.");
+        tw_logs = tw_logs
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut l)| {
+                l.id = Some(i);
+                l
+            })
+            .collect();
+    }
 
     // Iterate over logs
     let upload_tag = tw_conf
