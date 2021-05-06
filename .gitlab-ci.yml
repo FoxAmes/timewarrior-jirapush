@@ -20,12 +20,12 @@ stages:
 test-deb-11:
   stage: test
   image: rust:bullseye
-  script: cargo test --verbose
+  script: cargo test --verbose --release
 
 test-deb-10:
   stage: test
   image: rust:buster
-  script: cargo test --verbose
+  script: cargo test --verbose --release
 
 # Build stages compile and create artifacts
 build-deb-11:
