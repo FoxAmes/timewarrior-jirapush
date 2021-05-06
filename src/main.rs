@@ -20,7 +20,7 @@ use time::OffsetDateTime;
 /// ```
 #[derive(Serialize, Deserialize, Debug)]
 struct TimeWarriorLog {
-    pub id: usize,
+    pub id: Option<usize>,
     pub start: String,
     pub end: Option<String>,
     pub tags: Vec<String>,
@@ -57,16 +57,63 @@ fn parse_tw_config(block: &str) -> HashMap<String, String> {
 
 /// Tag a timewarrior interval
 fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
+    let id = match tw_log.id {
+        Some(i) => i,
+        // For timewarrior versions before 1.3.0, we won't have an ID- do our best to guess one
+        None => {
+            // List all timewarrior intervals
+            match std::process::Command::new("timew")
+                .args(&["show", ":ids"])
+                .output()
+            {
+                // Search based on our given log
+                Ok(out) => {
+                    // Iterate over each line
+                    // There's a lot here- we check start and end timestamps, and each tag, line by line
+                    // Matching lines are then searched for IDs via Regex, and matches collected
+                    let possible_ids: Vec<usize> = out
+                        .stdout
+                        .iter()
+                        .map(|l| l.to_string())
+                        .filter_map(|line| {
+                            match line.contains(&tw_log.start)
+                                && line.contains(tw_log.end.as_ref().unwrap())
+                                && tw_log.tags.iter().all(|t| line.contains(t))
+                            {
+                                true => {
+                                    let id_regex = Regex::new(r"\s@(?P<id>\d+)").unwrap();
+                                    usize::from_str(&id_regex.captures(&line)?[0]).ok()
+                                }
+                                false => None,
+                            }
+                        })
+                        .collect();
+                    match possible_ids.is_empty() {
+                        true => {
+                            return Err(
+                                "No matching intervals found.  You may need to upgrade Timewarrior."
+                                    .to_string(),
+                            );
+                        }
+                        false => possible_ids[0],
+                    }
+                }
+                Err(_) => {
+                    return Err(
+                        "Unable to determine log ID. You may need to upgrade Timewarrior."
+                            .to_string(),
+                    )
+                }
+            }
+        }
+    };
     // Call the interval as uploaded
     match std::process::Command::new("timew")
-        .args(&["tag", &format!("@{}", tw_log.id), tag])
+        .args(&["tag", &format!("@{}", id), tag])
         .output()
     {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!(
-            "Error marking interval {} as uploaded: {}",
-            tw_log.id, e
-        )),
+        Err(e) => Err(format!("Error marking interval {} as uploaded: {}", id, e)),
     }
 }
 
@@ -216,15 +263,12 @@ fn main() {
                     // Tag the interval as uploaded
                     match tag_tw_log(&log, &upload_tag) {
                         Ok(_) => {
-                            info!(
-                                "Log @{} already exists for {}, marking as uploaded.",
-                                log.id, issue
-                            );
+                            info!("Log already exists for {}, marking as uploaded.", issue);
                         }
                         Err(e) => {
                             warn!(
-                                "Error marking existing interval {} as uploaded: {}",
-                                log.id, e
+                                "Error marking existing interval {:?} as uploaded: {}",
+                                log, e
                             );
                         }
                     }
@@ -237,10 +281,10 @@ fn main() {
                     // Tag the interval as uploaded
                     match tag_tw_log(&log, &upload_tag) {
                         Ok(_) => {
-                            info!("Logged @{} for {}", log.id, issue);
+                            info!("Logged for {}", issue);
                         }
                         Err(e) => {
-                            warn!("Error marking interval {} as uploaded: {}", log.id, e);
+                            warn!("Error marking interval {:?} as uploaded: {}", log, e);
                         }
                     }
                 }
