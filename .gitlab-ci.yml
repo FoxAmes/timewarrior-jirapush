@@ -1,0 +1,53 @@
+# Configure cache for rust crates
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - target/*/.fingerprint/
+    - target/*/deps/
+    - target/*/build/
+
+# Install build deps
+before_script:
+  - apt-get update -yqq
+  - apt-get install -yqq --no-install-recommends build-essential
+
+# Pipeline stage layout
+stages:
+  - test
+  - build
+
+# Testing stages run cargo unit tests
+test-deb-11:
+  stage: test
+  image: rust:bullseye
+  script: cargo test --verbose
+
+test-deb-10:
+  stage: test
+  image: rust:buster
+  script: cargo test --verbose
+
+# Build stages compile and create artifacts
+build-deb-11:
+  stage: build
+  image: rust:bullseye
+  script:
+    - cargo build --release
+    - cp target/release/jirapush target/release/jirapush-deb11
+  artifacts:
+    paths:
+      - target/release/jirapush-deb11
+  rules:
+    - if: '$CI_COMMIT_REF_SLUG =~ /^v(\d.?){1,3}$/'
+
+build-deb-10:
+  stage: build
+  image: rust:bullseye
+  script:
+    - cargo build --release
+    - cp target/release/jirapush target/release/jirapush-deb10
+  artifacts:
+    paths:
+      - target/release/jirapush-deb10
+  rules:
+    - if: '$CI_COMMIT_REF_SLUG =~ /^v(\d.?){1,3}$/'
