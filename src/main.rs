@@ -134,6 +134,7 @@ fn main() {
         < semver::Version::parse("1.3.0").unwrap()
     {
         warn!("You are using an outdated version of Timewarrior. Work logs may not be accurately identified.");
+        tw_logs.reverse();
         tw_logs = tw_logs
             .into_iter()
             .enumerate()
