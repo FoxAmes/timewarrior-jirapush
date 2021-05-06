@@ -6,7 +6,7 @@ use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, str::FromStr};
 use std::{io::stdin, time::Duration};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 /// A structure representing a single TimeWarrior log entry.
 /// # Examples
@@ -63,7 +63,7 @@ fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
         None => {
             // List all timewarrior intervals
             match std::process::Command::new("timew")
-                .args(&["show", ":ids"])
+                .args(&["summary", ":ids"])
                 .output()
             {
                 // Search based on our given log
@@ -71,14 +71,22 @@ fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
                     // Iterate over each line
                     // There's a lot here- we check start and end timestamps, and each tag, line by line
                     // Matching lines are then searched for IDs via Regex, and matches collected
-                    let possible_ids: Vec<usize> = out
-                        .stdout
-                        .iter()
-                        .map(|l| l.to_string())
+                    let possible_ids: Vec<usize> = String::from_utf8(out.stdout)
+                        .unwrap()
+                        .lines()
                         .filter_map(|line| {
-                            match line.contains(&tw_log.start)
-                                && line.contains(tw_log.end.as_ref().unwrap())
-                                && tw_log.tags.iter().all(|t| line.contains(t))
+                            match line.contains(
+                                &PrimitiveDateTime::parse(&tw_log.start, "%Y%m%dT%H%M%SZ")
+                                    .unwrap()
+                                    .format("%T"),
+                            ) && line.contains(
+                                &PrimitiveDateTime::parse(
+                                    tw_log.end.as_ref().unwrap(),
+                                    "%Y%m%dT%H%M%SZ",
+                                )
+                                .unwrap()
+                                .format("%T"),
+                            ) && tw_log.tags.iter().all(|t| line.contains(t))
                             {
                                 true => {
                                     let id_regex = Regex::new(r"\s@(?P<id>\d+)").unwrap();
@@ -88,6 +96,16 @@ fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
                             }
                         })
                         .collect();
+                    warn!(
+                        "s: {:?} vs {:?}, e: {:?}, t: {:?}",
+                        &tw_log.start,
+                        &PrimitiveDateTime::parse(&tw_log.start, "%Y%m%dT%H%M%SZ")
+                            .unwrap()
+                            .format("%T"),
+                        tw_log.end.as_ref().unwrap(),
+                        &tw_log.tags
+                    );
+                    panic!("Possible matches: {:?}", possible_ids);
                     match possible_ids.is_empty() {
                         true => {
                             return Err(
