@@ -1,6 +1,6 @@
 # Configure cache for rust crates
 cache:
-  key: ${CI_COMMIT_REF_SLUG}
+  key: ${CI_COMMIT_SHA}
   paths:
     - target/*/.fingerprint/
     - target/*/deps/
