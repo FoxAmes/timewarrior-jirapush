@@ -139,7 +139,7 @@ fn main() {
             .into_iter()
             .enumerate()
             .map(|(i, mut l)| {
-                l.id = Some(i);
+                l.id = Some(i + 1);
                 l
             })
             .collect();
