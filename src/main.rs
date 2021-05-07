@@ -1,10 +1,13 @@
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub mod jira;
 
 use jira::JiraWorklog;
 use log::{debug, error, info, warn, LevelFilter};
 use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, io::Read, str::FromStr};
 use std::{io::stdin, time::Duration};
 use time::OffsetDateTime;
 
@@ -20,10 +23,86 @@ use time::OffsetDateTime;
 /// ```
 #[derive(Serialize, Deserialize, Debug)]
 struct TimeWarriorLog {
-    pub id: Option<usize>,
+    pub id: usize,
     pub start: String,
     pub end: Option<String>,
     pub tags: Vec<String>,
+}
+
+/// Takes given TimeWarrior input and parses config and logs from it.
+/// Returns a HashMap with configuration and a list of logs as a tuple.
+fn parse_tw_input(input: &str) -> Result<(HashMap<String, String>, Vec<TimeWarriorLog>), String> {
+    // Everything up to the first blank line is config
+    let config_block = input
+        .lines()
+        .take_while(|l| l.trim().len() > 1)
+        .collect::<Vec<&str>>()
+        .join("\n");
+    // Everything after is the JSON entry body
+    let entries = input
+        .lines()
+        .skip(config_block.lines().count() + 1)
+        .collect::<Vec<&str>>()
+        .join("\n");
+
+    // Parse config initially passed from TimeWarrior
+    let tw_conf = parse_tw_config(&config_block);
+
+    // Read remaining JSON body of logs
+    #[derive(Serialize, Deserialize)]
+    struct TimeWarriorLogRaw {
+        pub id: Option<usize>,
+        pub start: String,
+        pub end: Option<String>,
+        pub tags: Vec<String>,
+    }
+    debug!("Parsing entries: {:?}", entries);
+    let mut tw_logs: Vec<TimeWarriorLogRaw> = match serde_json::from_str(&entries) {
+        Ok(l) => l,
+        Err(e) => {
+            return Err(format!("Error parsing timewarrior log as JSON: {}", e));
+        }
+    };
+    // Convert raw TW logs
+    // We reverse the logs as they are in descending order by default
+    tw_logs.reverse();
+    let mut tw_logs: Vec<TimeWarriorLog> = tw_logs
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            match l.id {
+                Some(id) => Some(TimeWarriorLog {
+                    id: id,
+                    start: l.start,
+                    end: l.end,
+                    tags: l.tags,
+                }),
+                None => {
+                    // For old TimeWarrior versions, we need to infer the ID
+                    match semver::Version::parse(
+                        tw_conf.get("temp.version").unwrap_or(&"1.0.0".to_string()),
+                    )
+                    .expect("Unable to parse TimeWarrior version")
+                        < semver::Version::parse("1.3.0").unwrap()
+                    {
+                        true => {
+                            warn!("You are using an outdated version of Timewarrior. Work logs may not be accurately identified.");
+                            Some(TimeWarriorLog {
+                                id: i + 1,
+                                start: l.start,
+                                end: l.end,
+                                tags: l.tags,
+                            })
+                        },
+                        false => None,
+                    }
+                }
+            }
+        })
+        .collect();
+    tw_logs.reverse();
+
+    Ok((tw_conf, tw_logs))
 }
 
 /// Parses key-value configuration passed by TimeWarrior.
@@ -58,30 +137,25 @@ fn parse_tw_config(block: &str) -> HashMap<String, String> {
 /// Tag a timewarrior interval
 fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
     // Call the interval as uploaded
-    let id = tw_log.id.unwrap();
     match std::process::Command::new("timew")
-        .args(&["tag", &format!("@{}", id), tag])
+        .args(&["tag", &format!("@{}", tw_log.id), tag])
         .output()
     {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!("Error marking interval {} as uploaded: {}", id, e)),
+        Err(e) => Err(format!(
+            "Error marking interval {} as uploaded: {}",
+            tw_log.id, e
+        )),
     }
 }
 
 fn main() {
-    // Parse config initially passed from TimeWarrior
-    // Read and store config pairs from stdin
-    let mut stdin_block = String::new();
-    while let Ok(chars) = stdin().read_line(&mut stdin_block) {
-        match chars {
-            0..=1 => {
-                // If we've reached an empty line, there is no more config to read
-                break;
-            }
-            _ => {}
-        }
-    }
-    let tw_conf = parse_tw_config(&stdin_block);
+    // Parse TimeWarrior input
+    let mut input = String::new();
+    stdin()
+        .read_to_string(&mut input)
+        .expect("Error reading from stdin");
+    let (tw_conf, tw_logs) = parse_tw_input(&input).expect("Error parsing TimeWarrior input");
 
     // Check required config (JIRA base URL, username, token)
     if !(tw_conf.contains_key("twjp.url")
@@ -119,33 +193,7 @@ fn main() {
     // Build logger
     env_logger::builder().filter_level(log_level).init();
 
-    // Read remaining JSON body of logs
-    let mut tw_logs: Vec<TimeWarriorLog> = match serde_json::from_reader(stdin()) {
-        Ok(l) => l,
-        Err(e) => {
-            error!("Error parsing timewarrior log as JSON: {}", e);
-            return;
-        }
-    };
-
-    // For versions of timewarrior before 1.3.0, we need to assign IDs as best we can
-    if semver::Version::parse(tw_conf.get("temp.version").unwrap_or(&"0.0.0".to_string()))
-        .expect("Error getting Timewarrior version")
-        < semver::Version::parse("1.3.0").unwrap()
-    {
-        warn!("You are using an outdated version of Timewarrior. Work logs may not be accurately identified.");
-        tw_logs.reverse();
-        tw_logs = tw_logs
-            .into_iter()
-            .enumerate()
-            .map(|(i, mut l)| {
-                l.id = Some(i + 1);
-                l
-            })
-            .collect();
-    }
-
-    // Iterate over logs
+    // Iterate over logs to determine work we need to do
     let upload_tag = tw_conf
         .get("twjp.uploaded_tag")
         .unwrap_or(&"jira-uploaded".to_string())
