@@ -10,7 +10,7 @@ pub struct JiraConnection {
 }
 
 /// A structure representing a Jira work log.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraWorklog {
     pub started: String,
@@ -115,12 +115,17 @@ pub fn upload_worklog(
     issue: &str,
     wl: &JiraWorklog,
 ) -> Result<(), String> {
+    let mut temp_wl = wl.clone();
+    // Worklogs under 60 seconds are not recognized by JIRA, we need to round up
+    if temp_wl.time_spent_seconds < 60 {
+        temp_wl.time_spent_seconds = 60;
+    }
     // Fetch worklogs
     match post(
         rc,
         jc,
         &format!("rest/api/3/issue/{issue}/worklog", issue = issue),
-        serde_json::to_string(&wl).unwrap(),
+        serde_json::to_string(&temp_wl).unwrap(),
     ) {
         // Handle failed connections
         Err(e) => Err(format!(
