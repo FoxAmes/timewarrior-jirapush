@@ -20,7 +20,7 @@ use time::OffsetDateTime;
 /// ```
 #[derive(Serialize, Deserialize, Debug)]
 struct TimeWarriorLog {
-    pub id: usize,
+    pub id: Option<usize>,
     pub start: String,
     pub end: Option<String>,
     pub tags: Vec<String>,
@@ -58,15 +58,13 @@ fn parse_tw_config(block: &str) -> HashMap<String, String> {
 /// Tag a timewarrior interval
 fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
     // Call the interval as uploaded
+    let id = tw_log.id.unwrap();
     match std::process::Command::new("timew")
-        .args(&["tag", &format!("@{}", tw_log.id), tag])
+        .args(&["tag", &format!("@{}", id), tag])
         .output()
     {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!(
-            "Error marking interval {} as uploaded: {}",
-            tw_log.id, e
-        )),
+        Err(e) => Err(format!("Error marking interval {} as uploaded: {}", id, e)),
     }
 }
 
@@ -122,13 +120,30 @@ fn main() {
     env_logger::builder().filter_level(log_level).init();
 
     // Read remaining JSON body of logs
-    let tw_logs: Vec<TimeWarriorLog> = match serde_json::from_reader(stdin()) {
+    let mut tw_logs: Vec<TimeWarriorLog> = match serde_json::from_reader(stdin()) {
         Ok(l) => l,
         Err(e) => {
             error!("Error parsing timewarrior log as JSON: {}", e);
             return;
         }
     };
+
+    // For versions of timewarrior before 1.3.0, we need to assign IDs as best we can
+    if semver::Version::parse(tw_conf.get("temp.version").unwrap_or(&"0.0.0".to_string()))
+        .expect("Error getting Timewarrior version")
+        < semver::Version::parse("1.3.0").unwrap()
+    {
+        warn!("You are using an outdated version of Timewarrior. Work logs may not be accurately identified.");
+        tw_logs.reverse();
+        tw_logs = tw_logs
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut l)| {
+                l.id = Some(i + 1);
+                l
+            })
+            .collect();
+    }
 
     // Iterate over logs
     let upload_tag = tw_conf
@@ -216,15 +231,12 @@ fn main() {
                     // Tag the interval as uploaded
                     match tag_tw_log(&log, &upload_tag) {
                         Ok(_) => {
-                            info!(
-                                "Log @{} already exists for {}, marking as uploaded.",
-                                log.id, issue
-                            );
+                            info!("Log already exists for {}, marking as uploaded.", issue);
                         }
                         Err(e) => {
                             warn!(
-                                "Error marking existing interval {} as uploaded: {}",
-                                log.id, e
+                                "Error marking existing interval {:?} as uploaded: {}",
+                                log, e
                             );
                         }
                     }
@@ -237,10 +249,10 @@ fn main() {
                     // Tag the interval as uploaded
                     match tag_tw_log(&log, &upload_tag) {
                         Ok(_) => {
-                            info!("Logged @{} for {}", log.id, issue);
+                            info!("Logged for {}", issue);
                         }
                         Err(e) => {
-                            warn!("Error marking interval {} as uploaded: {}", log.id, e);
+                            warn!("Error marking interval {:?} as uploaded: {}", log, e);
                         }
                     }
                 }
