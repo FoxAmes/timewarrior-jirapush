@@ -1,6 +1,6 @@
 [package]
 name = "timewarrior_jirapush"
-version = "0.1.0"
+version = "0.3.0"
 authors = ["Forest Ames <fox.ames@t7c.dev>"]
 edition = "2018"
 description = "TimeWarrior-JiraPush is a configurable TimeWarrior Extension that uploads timewarrior intervals to Jira as work logs."
@@ -20,6 +20,7 @@ panic = 'abort'
 
 [dependencies]
 "env_logger" = "0.8.3"
+"futures" = "0.3.15"
 "log" = "0.4.14"
 "regex" = "1.4.5"
 "reqwest" = { version = "0.11.2", features = ["blocking"] }
@@ -27,3 +28,4 @@ panic = 'abort'
 "serde_json" = "1.0.64"
 "serde" = { version = "1.0.125", features = ["derive"] }
 "time" = { version = "0.2.26", features = ["serde"] }
+"tokio" = { version = "1.5.0", features = ["full"] }
