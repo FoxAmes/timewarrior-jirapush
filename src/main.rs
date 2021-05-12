@@ -11,7 +11,8 @@ use std::{io::stdin, io::Read, str::FromStr, time::Duration};
 use time::OffsetDateTime;
 use timewarrior::TimeWarriorLog;
 
-fn main() {
+#[tokio::main]
+pub async fn main() {
     // Parse TimeWarrior input
     let mut input = String::new();
     stdin()
@@ -61,8 +62,8 @@ fn main() {
         .get("twjp.uploaded_tag")
         .unwrap_or(&"jira-uploaded".to_string())
         .clone();
-    let mut pending_logs = Vec::<(String, &TimeWarriorLog)>::new();
-    for tw_log in &tw_logs {
+    let mut pending_logs = Vec::<(String, TimeWarriorLog)>::new();
+    for tw_log in tw_logs {
         // Check if log is uploaded, and if not, if it's complete and so needs to be
         let is_uploaded = tw_log.tags.contains(&upload_tag);
         let is_complete = tw_log.end.is_some();
@@ -80,7 +81,7 @@ fn main() {
     // Additionally, mark uploaded logs as such
     if pending_logs.len() > 0 {
         // Build connection info
-        let rest_c = reqwest::blocking::Client::builder()
+        let rest_c = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
@@ -91,6 +92,7 @@ fn main() {
         };
 
         // Handle our pending logs
+        let mut upload_tasks = Vec::new();
         for (issue, log) in pending_logs {
             // Parse sparse ISO8601 dates handed off by TimeWarrior
             let start = OffsetDateTime::parse(
@@ -112,65 +114,76 @@ fn main() {
                 time_spent_seconds: (end - start).whole_seconds(),
             };
 
-            // Check to see if an existing worklog at that time exists (unless configured otherwise)
-            if bool::from_str(
+            let check_existing = bool::from_str(
                 tw_conf
                     .get("twjp.skip_existing")
                     .unwrap_or(&"true".to_string()),
             )
-            .unwrap_or(true)
-            {
-                // Fetch existing logs
-                let existing_logs = jira::get_worklogs(&rest_c, &jc, &issue);
-                debug!("Existing logs: {:?}", existing_logs);
-                // Compare logs
-                let mut exists = false;
-                for wl in existing_logs {
-                    // Jira stores milliseconds which cannot be easily parsed here as there's no formatting directive
-                    // We will superimpose 0's there so we can still parse.
-                    let mut corrected_time = wl.started.clone();
-                    corrected_time.replace_range(20..=22, "000");
-                    let e_start =
-                        OffsetDateTime::parse(corrected_time, "%Y-%m-%dT%H:%M:%S.000%z").unwrap();
-                    if e_start == start {
-                        exists = true;
-                        break;
-                    }
-                }
-                // We have a log here already, skip this one.
-                if exists {
-                    // Tag the interval as uploaded
-                    match timewarrior::tag_tw_log(&log, &upload_tag) {
-                        Ok(_) => {
-                            info!("Log already exists for {}, marking as uploaded.", issue);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Error marking existing interval {:?} as uploaded: {}",
-                                log, e
-                            );
+            .unwrap_or(true);
+
+            // Spawn a thread to check and upload the log
+            let rest_c = rest_c.clone();
+            let jc = jc.clone();
+            let upload_tag = upload_tag.clone();
+            upload_tasks.push(tokio::spawn(async move {
+                // Check to see if an existing worklog at that time exists (unless configured otherwise)
+                if check_existing {
+                    // Fetch existing logs
+                    let existing_logs = jira::get_worklogs(&rest_c, &jc, &issue).await;
+                    debug!("Existing logs: {:?}", existing_logs);
+                    // Compare logs
+                    let mut exists = false;
+                    for wl in existing_logs {
+                        // Jira stores milliseconds which cannot be easily parsed here as there's no formatting directive
+                        // We will superimpose 0's there so we can still parse.
+                        let mut corrected_time = wl.started.clone();
+                        corrected_time.replace_range(20..=22, "000");
+                        let e_start =
+                            OffsetDateTime::parse(corrected_time, "%Y-%m-%dT%H:%M:%S.000%z")
+                                .unwrap();
+                        if e_start == start {
+                            exists = true;
+                            break;
                         }
                     }
-                    continue;
-                }
-            }
-            // Upload
-            match jira::upload_worklog(&rest_c, &jc, &issue, &worklog) {
-                Ok(_) => {
-                    // Tag the interval as uploaded
-                    match timewarrior::tag_tw_log(&log, &upload_tag) {
-                        Ok(_) => {
-                            info!("Logged for {}", issue);
+                    // We have a log here already, skip this one.
+                    if exists {
+                        // Tag the interval as uploaded
+                        match timewarrior::tag_tw_log(&log, &upload_tag) {
+                            Ok(_) => {
+                                info!("Log already exists for {}, marking as uploaded.", issue);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Error marking existing interval {:?} as uploaded: {}",
+                                    log, e
+                                );
+                            }
                         }
-                        Err(e) => {
-                            warn!("Error marking interval {:?} as uploaded: {}", log, e);
-                        }
+                        return;
                     }
                 }
-                Err(e) => {
-                    warn!("Error logging {:?} for {}: {}", worklog, issue, e);
+                // Upload
+                match jira::upload_worklog(&rest_c, &jc, &issue, &worklog).await {
+                    Ok(_) => {
+                        // Tag the interval as uploaded
+                        match timewarrior::tag_tw_log(&log, &upload_tag) {
+                            Ok(_) => {
+                                info!("Logged for {}", issue);
+                            }
+                            Err(e) => {
+                                warn!("Error marking interval {:?} as uploaded: {}", log, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Error logging {:?} for {}: {}", worklog, issue, e);
+                    }
                 }
-            }
+            }));
         }
+
+        // Join up with upload tasks
+        futures::future::join_all(upload_tasks).await;
     }
 }
