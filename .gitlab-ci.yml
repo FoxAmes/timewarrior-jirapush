@@ -9,7 +9,7 @@ cache:
 # Install build deps
 before_script:
   - apt-get update -yqq
-  - apt-get install -yqq --no-install-recommends build-essential
+  - apt-get install -yqq --no-install-recommends build-essential binutils
 
 # Pipeline stage layout
 stages:
@@ -33,6 +33,7 @@ build-deb-11:
   image: rust:bullseye
   script:
     - cargo build --release
+    - strip target/release/jirapush
   artifacts:
     paths:
       - target/release/jirapush
@@ -47,6 +48,7 @@ build-deb-10:
   image: rust:buster
   script:
     - cargo build --release
+    - strip target/release/jirapush
   artifacts:
     paths:
       - target/release/jirapush

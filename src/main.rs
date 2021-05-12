@@ -2,160 +2,24 @@
 pub(crate) mod tests;
 
 pub mod jira;
+pub mod timewarrior;
 
 use jira::JiraWorklog;
 use log::{debug, error, info, warn, LevelFilter};
 use regex::{Captures, Regex};
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io::Read, str::FromStr};
-use std::{io::stdin, time::Duration};
+use std::{io::stdin, io::Read, str::FromStr, time::Duration};
 use time::OffsetDateTime;
+use timewarrior::TimeWarriorLog;
 
-/// A structure representing a single TimeWarrior log entry.
-/// # Examples
-/// These logs come from TimeWarrior as a JSON object:
-/// ```
-/// {
-///   "start":"20160405T162205Z",
-///   "end":"20160405T162211Z",
-///   "tags":["This is a multi-word tag","ProjectA","tag123"]
-/// }
-/// ```
-#[derive(Serialize, Deserialize, Debug)]
-struct TimeWarriorLog {
-    pub id: usize,
-    pub start: String,
-    pub end: Option<String>,
-    pub tags: Vec<String>,
-}
-
-/// Takes given TimeWarrior input and parses config and logs from it.
-/// Returns a HashMap with configuration and a list of logs as a tuple.
-fn parse_tw_input(input: &str) -> Result<(HashMap<String, String>, Vec<TimeWarriorLog>), String> {
-    // Everything up to the first blank line is config
-    let config_block = input
-        .lines()
-        .take_while(|l| l.trim().len() > 1)
-        .collect::<Vec<&str>>()
-        .join("\n");
-    // Everything after is the JSON entry body
-    let entries = input
-        .lines()
-        .skip(config_block.lines().count() + 1)
-        .collect::<Vec<&str>>()
-        .join("\n");
-
-    // Parse config initially passed from TimeWarrior
-    let tw_conf = parse_tw_config(&config_block);
-
-    // Read remaining JSON body of logs
-    #[derive(Serialize, Deserialize)]
-    struct TimeWarriorLogRaw {
-        pub id: Option<usize>,
-        pub start: String,
-        pub end: Option<String>,
-        pub tags: Vec<String>,
-    }
-    debug!("Parsing entries: {:?}", entries);
-    let mut tw_logs: Vec<TimeWarriorLogRaw> = match serde_json::from_str(&entries) {
-        Ok(l) => l,
-        Err(e) => {
-            return Err(format!("Error parsing timewarrior log as JSON: {}", e));
-        }
-    };
-    // Convert raw TW logs
-    // We reverse the logs as they are in descending order by default
-    tw_logs.reverse();
-    let mut tw_logs: Vec<TimeWarriorLog> = tw_logs
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, l)| {
-            match l.id {
-                Some(id) => Some(TimeWarriorLog {
-                    id: id,
-                    start: l.start,
-                    end: l.end,
-                    tags: l.tags,
-                }),
-                None => {
-                    // For old TimeWarrior versions, we need to infer the ID
-                    match semver::Version::parse(
-                        tw_conf.get("temp.version").unwrap_or(&"1.0.0".to_string()),
-                    )
-                    .expect("Unable to parse TimeWarrior version")
-                        < semver::Version::parse("1.3.0").unwrap()
-                    {
-                        true => {
-                            warn!("You are using an outdated version of Timewarrior. Work logs may not be accurately identified.");
-                            Some(TimeWarriorLog {
-                                id: i + 1,
-                                start: l.start,
-                                end: l.end,
-                                tags: l.tags,
-                            })
-                        },
-                        false => None,
-                    }
-                }
-            }
-        })
-        .collect();
-    tw_logs.reverse();
-
-    Ok((tw_conf, tw_logs))
-}
-
-/// Parses key-value configuration passed by TimeWarrior.
-/// See https://timewarrior.net/docs/api/#input-format for more information.
-fn parse_tw_config(block: &str) -> HashMap<String, String> {
-    // Create a new map
-    let mut tw_conf = HashMap::<String, String>::new();
-    // Read and store config pairs
-    for stdin_line in block.split('\n').filter(|d| d.contains(":")) {
-        // Attempt to split the key-value pair
-        let directives: Vec<&str> = stdin_line.split(':').map(|d| d.trim()).collect();
-        match directives.len() {
-            0..=1 => {
-                // Skip invalid lines
-                warn!(
-                    "Unable to parse TimeWarrior config: {}, skipping",
-                    stdin_line
-                );
-            }
-            _ => {
-                // Store valid lines
-                tw_conf.insert(
-                    directives[0].to_string(),
-                    directives[1..].join(":").to_string(),
-                );
-            }
-        }
-    }
-    tw_conf
-}
-
-/// Tag a timewarrior interval
-fn tag_tw_log(tw_log: &TimeWarriorLog, tag: &str) -> Result<(), String> {
-    // Call the interval as uploaded
-    match std::process::Command::new("timew")
-        .args(&["tag", &format!("@{}", tw_log.id), tag])
-        .output()
-    {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!(
-            "Error marking interval {} as uploaded: {}",
-            tw_log.id, e
-        )),
-    }
-}
-
-fn main() {
+#[tokio::main]
+pub async fn main() {
     // Parse TimeWarrior input
     let mut input = String::new();
     stdin()
         .read_to_string(&mut input)
         .expect("Error reading from stdin");
-    let (tw_conf, tw_logs) = parse_tw_input(&input).expect("Error parsing TimeWarrior input");
+    let (tw_conf, tw_logs) =
+        timewarrior::parse_tw_input(&input).expect("Error parsing TimeWarrior input");
 
     // Check required config (JIRA base URL, username, token)
     if !(tw_conf.contains_key("twjp.url")
@@ -198,8 +62,8 @@ fn main() {
         .get("twjp.uploaded_tag")
         .unwrap_or(&"jira-uploaded".to_string())
         .clone();
-    let mut pending_logs = Vec::<(String, &TimeWarriorLog)>::new();
-    for tw_log in &tw_logs {
+    let mut pending_logs = Vec::<(String, TimeWarriorLog)>::new();
+    for tw_log in tw_logs {
         // Check if log is uploaded, and if not, if it's complete and so needs to be
         let is_uploaded = tw_log.tags.contains(&upload_tag);
         let is_complete = tw_log.end.is_some();
@@ -217,7 +81,7 @@ fn main() {
     // Additionally, mark uploaded logs as such
     if pending_logs.len() > 0 {
         // Build connection info
-        let rest_c = reqwest::blocking::Client::builder()
+        let rest_c = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
@@ -228,6 +92,7 @@ fn main() {
         };
 
         // Handle our pending logs
+        let mut upload_tasks = Vec::new();
         for (issue, log) in pending_logs {
             // Parse sparse ISO8601 dates handed off by TimeWarrior
             let start = OffsetDateTime::parse(
@@ -249,65 +114,76 @@ fn main() {
                 time_spent_seconds: (end - start).whole_seconds(),
             };
 
-            // Check to see if an existing worklog at that time exists (unless configured otherwise)
-            if bool::from_str(
+            let check_existing = bool::from_str(
                 tw_conf
                     .get("twjp.skip_existing")
                     .unwrap_or(&"true".to_string()),
             )
-            .unwrap_or(true)
-            {
-                // Fetch existing logs
-                let existing_logs = jira::get_worklogs(&rest_c, &jc, &issue);
-                debug!("Existing logs: {:?}", existing_logs);
-                // Compare logs
-                let mut exists = false;
-                for wl in existing_logs {
-                    // Jira stores milliseconds which cannot be easily parsed here as there's no formatting directive
-                    // We will superimpose 0's there so we can still parse.
-                    let mut corrected_time = wl.started.clone();
-                    corrected_time.replace_range(20..=22, "000");
-                    let e_start =
-                        OffsetDateTime::parse(corrected_time, "%Y-%m-%dT%H:%M:%S.000%z").unwrap();
-                    if e_start == start {
-                        exists = true;
-                        break;
-                    }
-                }
-                // We have a log here already, skip this one.
-                if exists {
-                    // Tag the interval as uploaded
-                    match tag_tw_log(&log, &upload_tag) {
-                        Ok(_) => {
-                            info!("Log already exists for {}, marking as uploaded.", issue);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Error marking existing interval {:?} as uploaded: {}",
-                                log, e
-                            );
+            .unwrap_or(true);
+
+            // Spawn a thread to check and upload the log
+            let rest_c = rest_c.clone();
+            let jc = jc.clone();
+            let upload_tag = upload_tag.clone();
+            upload_tasks.push(tokio::spawn(async move {
+                // Check to see if an existing worklog at that time exists (unless configured otherwise)
+                if check_existing {
+                    // Fetch existing logs
+                    let existing_logs = jira::get_worklogs(&rest_c, &jc, &issue).await;
+                    debug!("Existing logs: {:?}", existing_logs);
+                    // Compare logs
+                    let mut exists = false;
+                    for wl in existing_logs {
+                        // Jira stores milliseconds which cannot be easily parsed here as there's no formatting directive
+                        // We will superimpose 0's there so we can still parse.
+                        let mut corrected_time = wl.started.clone();
+                        corrected_time.replace_range(20..=22, "000");
+                        let e_start =
+                            OffsetDateTime::parse(corrected_time, "%Y-%m-%dT%H:%M:%S.000%z")
+                                .unwrap();
+                        if e_start == start {
+                            exists = true;
+                            break;
                         }
                     }
-                    continue;
-                }
-            }
-            // Upload
-            match jira::upload_worklog(&rest_c, &jc, &issue, &worklog) {
-                Ok(_) => {
-                    // Tag the interval as uploaded
-                    match tag_tw_log(&log, &upload_tag) {
-                        Ok(_) => {
-                            info!("Logged for {}", issue);
+                    // We have a log here already, skip this one.
+                    if exists {
+                        // Tag the interval as uploaded
+                        match timewarrior::tag_tw_log(&log, &upload_tag) {
+                            Ok(_) => {
+                                info!("Log already exists for {}, marking as uploaded.", issue);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Error marking existing interval {:?} as uploaded: {}",
+                                    log, e
+                                );
+                            }
                         }
-                        Err(e) => {
-                            warn!("Error marking interval {:?} as uploaded: {}", log, e);
-                        }
+                        return;
                     }
                 }
-                Err(e) => {
-                    warn!("Error logging {:?} for {}: {}", worklog, issue, e);
+                // Upload
+                match jira::upload_worklog(&rest_c, &jc, &issue, &worklog).await {
+                    Ok(_) => {
+                        // Tag the interval as uploaded
+                        match timewarrior::tag_tw_log(&log, &upload_tag) {
+                            Ok(_) => {
+                                info!("Logged for {}", issue);
+                            }
+                            Err(e) => {
+                                warn!("Error marking interval {:?} as uploaded: {}", log, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Error logging {:?} for {}: {}", worklog, issue, e);
+                    }
                 }
-            }
+            }));
         }
+
+        // Join up with upload tasks
+        futures::future::join_all(upload_tasks).await;
     }
 }
