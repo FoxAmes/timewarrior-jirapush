@@ -13,6 +13,11 @@ license = "MIT"
 name = "jirapush"
 path = "src/main.rs"
 
+[profile.release]
+lto = true
+codegen-units = 1
+panic = 'abort'
+
 [dependencies]
 "env_logger" = "0.8.3"
 "log" = "0.4.14"

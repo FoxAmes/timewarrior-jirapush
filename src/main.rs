@@ -7,8 +7,7 @@ pub mod timewarrior;
 use jira::JiraWorklog;
 use log::{debug, error, info, warn, LevelFilter};
 use regex::{Captures, Regex};
-use std::{io::stdin, time::Duration};
-use std::{io::Read, str::FromStr};
+use std::{io::stdin, io::Read, str::FromStr, time::Duration};
 use time::OffsetDateTime;
 use timewarrior::TimeWarriorLog;
 
