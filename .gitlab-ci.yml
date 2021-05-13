@@ -10,6 +10,7 @@ cache:
 stages:
   - test
   - build
+  - upload
   - release
 
 # Testing stages run cargo unit tests
@@ -70,7 +71,7 @@ build-deb-10:
 
 # Upload artifacts and create releases on version tag pipelines
 release-upload:
-  stage: release
+  stage: upload
   image: curlimages/curl:latest
   needs:
     - job: build-deb-10
