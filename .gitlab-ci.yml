@@ -6,11 +6,6 @@ cache:
     - target/*/deps/
     - target/*/build/
 
-# Install build deps
-before_script:
-  - apt-get update -yqq
-  - apt-get install -yqq --no-install-recommends build-essential binutils
-
 # Pipeline stage layout
 stages:
   - test
@@ -21,17 +16,26 @@ stages:
 test-deb-11:
   stage: test
   image: rust:bullseye
+  before_script:
+    - apt-get update -yqq
+    - apt-get install -yqq --no-install-recommends build-essential binutils
   script: cargo test --verbose --release
 
 test-deb-10:
   stage: test
   image: rust:buster
+  before_script:
+    - apt-get update -yqq
+    - apt-get install -yqq --no-install-recommends build-essential binutils
   script: cargo test --verbose --release
 
 # Build stages compile and create artifacts
 build-deb-11:
   stage: build
   image: rust:bullseye
+  before_script:
+    - apt-get update -yqq
+    - apt-get install -yqq --no-install-recommends build-essential binutils
   script:
     - cargo build --release
     - strip target/release/jirapush
@@ -48,6 +52,9 @@ build-deb-11:
 build-deb-10:
   stage: build
   image: rust:buster
+  before_script:
+    - apt-get update -yqq
+    - apt-get install -yqq --no-install-recommends build-essential binutils
   script:
     - cargo build --release
     - strip target/release/jirapush
