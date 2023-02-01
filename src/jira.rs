@@ -1,12 +1,14 @@
 use log::{debug, warn};
-use reqwest::{Client, Response};
+use reqwest::{Client, Response, RequestBuilder};
+use reqwest::header;
 use serde::{Deserialize, Serialize};
 
 /// Jira instance connection information
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct JiraConnection {
     pub user: String,
     pub token: String,
+    pub is_pat: bool,
     pub instance_url: String,
 }
 
@@ -18,6 +20,24 @@ pub struct JiraWorklog {
     pub time_spent_seconds: i64,
 }
 
+fn add_common_headers(
+    rc: RequestBuilder,
+    jc: &JiraConnection
+) -> reqwest::RequestBuilder {
+    let mut tmp = rc
+        .header(header::ACCEPT, header::HeaderValue::from_static("application/json"))
+        .header(header::USER_AGENT, header::HeaderValue::from_static("jirapush/0.1.0"));
+    if jc.is_pat {
+        //tmp = tmp.bearer_auth(&jc.token);
+        tmp = tmp.header(header::AUTHORIZATION, format!("Bearer {}", &jc.token));
+    } else {
+        tmp = tmp.basic_auth(&jc.user, Some(&jc.token));
+    }
+    debug!("jc: {:#?}", &jc);
+    debug!("req: {:#?}", &tmp);
+    tmp
+}
+
 /// Generic get function for Jira API
 async fn get(
     rc: &Client,
@@ -25,13 +45,11 @@ async fn get(
     endpoint: &str,
     query: &Vec<(String, String)>,
 ) -> reqwest::Result<Response> {
-    rc.get(format!(
+    add_common_headers(rc.get(format!(
         "{base_url}/{endpoint}",
         base_url = jc.instance_url,
         endpoint = endpoint
-    ))
-    .basic_auth(&jc.user, Some(&jc.token))
-    .header("Accept", "application/json")
+    )), &jc)
     .query(query)
     .send()
     .await
@@ -44,13 +62,11 @@ async fn post(
     endpoint: &str,
     body: String,
 ) -> reqwest::Result<Response> {
-    rc.post(format!(
+    add_common_headers(rc.post(format!(
         "{base_url}/{endpoint}",
         base_url = jc.instance_url,
         endpoint = endpoint
-    ))
-    .basic_auth(&jc.user, Some(&jc.token))
-    .header("Accept", "application/json")
+    )), &jc)
     .header("Content-Type", "application/json")
     .body(body)
     .send()
@@ -68,7 +84,7 @@ pub async fn get_worklogs(rc: &Client, jc: &JiraConnection, issue: &str) -> Vec<
     match get(
         rc,
         jc,
-        &format!("rest/api/3/issue/{issue}/worklog", issue = issue),
+        &format!("rest/api/latest/issue/{issue}/worklog", issue = issue),
         &vec![],
     )
     .await
@@ -129,7 +145,7 @@ pub async fn upload_worklog(
     match post(
         rc,
         jc,
-        &format!("rest/api/3/issue/{issue}/worklog", issue = issue),
+        &format!("rest/api/latest/issue/{issue}/worklog", issue = issue),
         serde_json::to_string(&temp_wl).unwrap(),
     )
     .await
