@@ -5,6 +5,7 @@ pub mod jira;
 pub mod timewarrior;
 
 use jira::JiraWorklog;
+use jira::Author;
 use log::{debug, error, info, warn, LevelFilter};
 use regex::{Captures, Regex};
 use std::{io::stdin, io::Read, str::FromStr, time::Duration};
@@ -62,15 +63,12 @@ pub async fn main() {
         .get("twjp.uploaded_tag")
         .unwrap_or(&"jira-uploaded".to_string())
         .clone();
-
-    let mut is_pat = false;
-    if let Some(val) = tw_conf.get("twjp.is_pat") {
-        match val.as_str() {
-            "on" | "1" | "yes" | "y" | "true" => is_pat = true,
-            _ => is_pat = false
-        }
-    }
-
+    let is_pat = bool::from_str(
+                tw_conf
+                    .get("twjp.is_pat")
+                    .unwrap_or(&"false".to_string()),
+            )
+            .unwrap_or(false);
     let mut pending_logs = Vec::<(String, TimeWarriorLog)>::new();
     for tw_log in tw_logs {
         // Check if log is uploaded, and if not, if it's complete and so needs to be
@@ -100,6 +98,7 @@ pub async fn main() {
             is_pat: is_pat,
             instance_url: tw_conf["twjp.url"].clone(),
         };
+
         // Handle our pending logs
         let mut upload_tasks = Vec::new();
         for (issue, log) in pending_logs {
@@ -121,6 +120,9 @@ pub async fn main() {
             let worklog = JiraWorklog {
                 started: start.format("%FT%T.000%z"),
                 time_spent_seconds: (end - start).whole_seconds(),
+                author: Author {
+                    name: tw_conf["twjp.user"].clone()
+                },
             };
 
             let check_existing = bool::from_str(
@@ -150,7 +152,7 @@ pub async fn main() {
                         let e_start =
                             OffsetDateTime::parse(corrected_time, "%Y-%m-%dT%H:%M:%S.000%z")
                                 .unwrap();
-                        if e_start == start {
+                        if e_start == start && wl.author.name == worklog.author.name {
                             exists = true;
                             break;
                         }

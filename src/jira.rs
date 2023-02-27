@@ -12,12 +12,19 @@ pub struct JiraConnection {
     pub instance_url: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Author {
+    pub name: String,
+}
+
 /// A structure representing a Jira work log.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraWorklog {
     pub started: String,
     pub time_spent_seconds: i64,
+    pub author: Author,
 }
 
 fn add_common_headers(
